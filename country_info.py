@@ -12,6 +12,15 @@ import requests
 import xml.etree.ElementTree as ET
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from colorama import init, Fore, Back, Style
+from datetime import datetime
+import json
+
+# Inicializar colorama para Windows
+init(autoreset=True)
+
+# Variable global para el historial
+historial_busquedas = []
 
 
 def crear_session():
@@ -68,7 +77,7 @@ def hacer_llamada_soap(session, metodo, parametros=None):
         response.raise_for_status()
         return response.text
     except Exception as e:
-        print(f"❌ Error en llamada SOAP {metodo}: {e}")
+        print(f"{Fore.RED}❌ Error en llamada SOAP {metodo}: {e}{Style.RESET_ALL}")
         return None
 
 
@@ -91,7 +100,7 @@ def parsear_lista_paises(xml_response):
                 codigos.append(elem.text)
         return sorted(codigos)
     except Exception as e:
-        print(f"❌ Error al parsear lista de países: {e}")
+        print(f"{Fore.RED}❌ Error al parsear lista de países: {e}{Style.RESET_ALL}")
         return []
 
 
@@ -121,7 +130,7 @@ def parsear_info_pais(xml_response):
             response_elem = root.find('.//FullCountryInfoResult')
         
         if response_elem is None:
-            print("❌ No se pudo encontrar la información del país en la respuesta XML")
+            print(f"{Fore.RED}❌ No se pudo encontrar la información del país en la respuesta XML{Style.RESET_ALL}")
             return None
         
         info = {}
@@ -142,6 +151,12 @@ def parsear_info_pais(xml_response):
                 info['capital'] = elem.text
             elif tag == 'sCurrencyISOCode':
                 info['moneda'] = elem.text
+            elif tag == 'sPhoneCode':
+                info['codigo_telefono'] = elem.text
+            elif tag == 'sContinentCode':
+                info['continente'] = elem.text
+            elif tag == 'sCountryFlag':
+                info['bandera_url'] = elem.text
         
         # Verificar que tenemos la información mínima
         if 'nombre' in info:
@@ -149,12 +164,15 @@ def parsear_info_pais(xml_response):
                 'nombre': info.get('nombre', 'No disponible'),
                 'capital': info.get('capital', 'No disponible'),
                 'moneda': info.get('moneda', 'No disponible'),
-                'idiomas': ', '.join(idiomas) if idiomas else 'No disponible'
+                'idiomas': ', '.join(idiomas) if idiomas else 'No disponible',
+                'codigo_telefono': info.get('codigo_telefono', 'No disponible'),
+                'continente': info.get('continente', 'No disponible'),
+                'bandera_url': info.get('bandera_url', 'No disponible')
             }
         return None
         
     except Exception as e:
-        print(f"❌ Error al parsear información del país: {e}")
+        print(f"{Fore.RED}❌ Error al parsear información del país: {e}{Style.RESET_ALL}")
         return None
 
 
@@ -199,15 +217,19 @@ def mostrar_codigos_paises(codigos):
     Args:
         codigos (list): Lista de códigos de países
     """
-    print("\n📋 Códigos ISO de países disponibles:")
-    print("=" * 50)
+    print(f"\n{Fore.CYAN}📋 Códigos ISO de países disponibles:{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{'=' * 50}{Style.RESET_ALL}")
     
-    # Mostrar códigos en columnas
+    # Mostrar códigos en columnas con colores alternados
     for i in range(0, len(codigos), 8):
         fila = codigos[i:i+8]
-        print("  ".join(f"{codigo:3}" for codigo in fila))
+        fila_coloreada = []
+        for j, codigo in enumerate(fila):
+            color = Fore.GREEN if j % 2 == 0 else Fore.YELLOW
+            fila_coloreada.append(f"{color}{codigo:3}{Style.RESET_ALL}")
+        print("  ".join(fila_coloreada))
     
-    print(f"\nTotal de países: {len(codigos)}")
+    print(f"\n{Fore.MAGENTA}Total de países: {len(codigos)}{Style.RESET_ALL}")
 
 
 def mostrar_info_pais(info_pais, codigo_pais):
@@ -218,73 +240,212 @@ def mostrar_info_pais(info_pais, codigo_pais):
         info_pais (dict): Información del país
         codigo_pais (str): Código ISO del país
     """
-    print(f"\n🌍 Información del país ({codigo_pais}):")
-    print("=" * 40)
-    print(f"🌍 País: {info_pais['nombre']}")
-    print(f"🏙️ Capital: {info_pais['capital']}")
-    print(f"💰 Moneda: {info_pais['moneda']}")
-    print(f"🗣️ Idiomas: {info_pais['idiomas']}")
+    print(f"\n{Fore.BLUE}🌍 Información del país ({codigo_pais}):{Style.RESET_ALL}")
+    print(f"{Fore.BLUE}{'=' * 50}{Style.RESET_ALL}")
+    
+    # Información principal
+    print(f"{Fore.GREEN}🌍 País:{Style.RESET_ALL} {info_pais['nombre']}")
+    print(f"{Fore.CYAN}🏙️ Capital:{Style.RESET_ALL} {info_pais['capital']}")
+    print(f"{Fore.YELLOW}💰 Moneda:{Style.RESET_ALL} {info_pais['moneda']}")
+    print(f"{Fore.MAGENTA}🗣️ Idiomas:{Style.RESET_ALL} {info_pais['idiomas']}")
+    
+    # Información adicional
+    print(f"{Fore.RED}📞 Código telefónico:{Style.RESET_ALL} +{info_pais['codigo_telefono']}")
+    print(f"{Fore.BLUE}🌎 Continente:{Style.RESET_ALL} {info_pais['continente']}")
+    
+    if info_pais['bandera_url'] != 'No disponible':
+        print(f"{Fore.GREEN}🏳️ Bandera:{Style.RESET_ALL} {info_pais['bandera_url']}")
+
+
+def agregar_al_historial(codigo_pais, info_pais):
+    """
+    Agrega una búsqueda al historial.
+    
+    Args:
+        codigo_pais (str): Código del país buscado
+        info_pais (dict): Información del país
+    """
+    global historial_busquedas
+    
+    busqueda = {
+        'codigo': codigo_pais,
+        'nombre': info_pais['nombre'],
+        'fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'info': info_pais
+    }
+    
+    historial_busquedas.append(busqueda)
+    
+    # Mantener solo las últimas 10 búsquedas
+    if len(historial_busquedas) > 10:
+        historial_busquedas = historial_busquedas[-10:]
+
+
+def mostrar_historial():
+    """
+    Muestra el historial de búsquedas recientes.
+    """
+    global historial_busquedas
+    
+    if not historial_busquedas:
+        print(f"{Fore.YELLOW}📝 No hay búsquedas recientes.{Style.RESET_ALL}")
+        return
+    
+    print(f"\n{Fore.CYAN}📚 Historial de búsquedas recientes:{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{'=' * 50}{Style.RESET_ALL}")
+    
+    for i, busqueda in enumerate(historial_busquedas, 1):
+        print(f"{Fore.GREEN}{i}.{Style.RESET_ALL} {busqueda['codigo']} - {busqueda['nombre']} ({busqueda['fecha']})")
+
+
+def exportar_resultados(archivo="resultados_paises.txt"):
+    """
+    Exporta el historial de búsquedas a un archivo de texto.
+    
+    Args:
+        archivo (str): Nombre del archivo de salida
+    """
+    global historial_busquedas
+    
+    if not historial_busquedas:
+        print(f"{Fore.YELLOW}📝 No hay resultados para exportar.{Style.RESET_ALL}")
+        return
+    
+    try:
+        with open(archivo, 'w', encoding='utf-8') as f:
+            f.write("🌍 CONSULTOR DE PAÍSES - RESULTADOS EXPORTADOS\n")
+            f.write("=" * 50 + "\n")
+            f.write(f"Fecha de exportación: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            
+            for busqueda in historial_busquedas:
+                f.write(f"📋 País: {busqueda['nombre']} ({busqueda['codigo']})\n")
+                f.write(f"📅 Fecha de búsqueda: {busqueda['fecha']}\n")
+                f.write(f"🏙️ Capital: {busqueda['info']['capital']}\n")
+                f.write(f"💰 Moneda: {busqueda['info']['moneda']}\n")
+                f.write(f"🗣️ Idiomas: {busqueda['info']['idiomas']}\n")
+                f.write(f"📞 Código telefónico: +{busqueda['info']['codigo_telefono']}\n")
+                f.write(f"🌎 Continente: {busqueda['info']['continente']}\n")
+                f.write("-" * 40 + "\n\n")
+        
+        print(f"{Fore.GREEN}✅ Resultados exportados a '{archivo}'{Style.RESET_ALL}")
+        
+    except Exception as e:
+        print(f"{Fore.RED}❌ Error al exportar resultados: {e}{Style.RESET_ALL}")
+
+
+def mostrar_banner():
+    """
+    Muestra un banner atractivo al inicio del programa.
+    """
+    banner = f"""
+{Fore.CYAN}
+╔══════════════════════════════════════════════════════════════╗
+║                    🌍 CONSULTOR DE PAÍSES 🌍                    ║
+║                                                              ║
+║  Script Python que consume servicios SOAP para obtener      ║
+║  información detallada sobre países del mundo.              ║
+║                                                              ║
+║  Desarrollado con ❤️  por AI Assistant                        ║
+╚══════════════════════════════════════════════════════════════╝
+{Style.RESET_ALL}
+"""
+    print(banner)
+
+
+def mostrar_menu_ayuda():
+    """
+    Muestra el menú de ayuda con comandos disponibles.
+    """
+    print(f"\n{Fore.YELLOW}📖 COMANDOS DISPONIBLES:{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{'=' * 40}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}• Código de país:{Style.RESET_ALL} Ingrese código ISO (ej: PE, US, ES)")
+    print(f"{Fore.GREEN}• salir/exit/quit:{Style.RESET_ALL} Salir del programa")
+    print(f"{Fore.GREEN}• ayuda/help:{Style.RESET_ALL} Mostrar esta ayuda")
+    print(f"{Fore.GREEN}• lista/list:{Style.RESET_ALL} Mostrar lista de países")
+    print(f"{Fore.GREEN}• historial/history:{Style.RESET_ALL} Mostrar búsquedas recientes")
+    print(f"{Fore.GREEN}• exportar/export:{Style.RESET_ALL} Exportar resultados a archivo")
+    print(f"{Fore.CYAN}{'=' * 40}{Style.RESET_ALL}")
 
 
 def main():
     """
     Función principal del script.
     """
-    print("🌍 Consultor de Información de Países")
-    print("=" * 40)
-    print("Conectando al servicio SOAP...")
+    mostrar_banner()
+    print(f"{Fore.YELLOW}Conectando al servicio SOAP...{Style.RESET_ALL}")
     
     # Crear sesión HTTP
     session = crear_session()
     
     # Obtener códigos de países
-    print("\nObteniendo lista de países...")
+    print(f"\n{Fore.YELLOW}Obteniendo lista de países...{Style.RESET_ALL}")
     codigos = obtener_codigos_paises(session)
     
     if not codigos:
-        print("❌ No se pudieron obtener los códigos de países.")
-        print("💡 Verifique su conexión a internet.")
+        print(f"{Fore.RED}❌ No se pudieron obtener los códigos de países.{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}💡 Verifique su conexión a internet.{Style.RESET_ALL}")
         sys.exit(1)
     
-    print("✅ Conexión exitosa al servicio SOAP")
+    print(f"{Fore.GREEN}✅ Conexión exitosa al servicio SOAP{Style.RESET_ALL}")
     
     # Mostrar códigos disponibles
     mostrar_codigos_paises(codigos)
+    
+    # Mostrar ayuda inicial
+    mostrar_menu_ayuda()
     
     # Bucle principal
     while True:
         try:
             # Solicitar código del país
-            codigo_pais = input("\n📝 Ingrese código ISO del país (o 'salir' para terminar): ").strip()
+            codigo_pais = input(f"\n{Fore.CYAN}📝 Ingrese código ISO del país (o 'ayuda' para comandos): {Style.RESET_ALL}").strip()
             
             if codigo_pais.lower() in ['salir', 'exit', 'quit']:
-                print("👋 ¡Hasta luego!")
+                print(f"\n{Fore.GREEN}👋 ¡Hasta luego!{Style.RESET_ALL}")
                 break
             
+            if codigo_pais.lower() in ['ayuda', 'help']:
+                mostrar_menu_ayuda()
+                continue
+            
+            if codigo_pais.lower() in ['lista', 'list']:
+                mostrar_codigos_paises(codigos)
+                continue
+            
+            if codigo_pais.lower() in ['historial', 'history']:
+                mostrar_historial()
+                continue
+            
+            if codigo_pais.lower() in ['exportar', 'export']:
+                exportar_resultados()
+                continue
+            
             if not codigo_pais:
-                print("❌ Por favor ingrese un código válido.")
+                print(f"{Fore.RED}❌ Por favor ingrese un código válido.{Style.RESET_ALL}")
                 continue
             
             # Validar que el código existe en la lista
             if codigo_pais.upper() not in [c.upper() for c in codigos]:
-                print(f"❌ El código '{codigo_pais}' no está en la lista de países disponibles.")
-                print("💡 Sugerencia: Use códigos de 2 letras como 'US', 'PE', 'ES', etc.")
+                print(f"{Fore.RED}❌ El código '{codigo_pais}' no está en la lista de países disponibles.{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}💡 Sugerencia: Use códigos de 2 letras como 'US', 'PE', 'ES', etc.{Style.RESET_ALL}")
                 continue
             
             # Obtener información del país
-            print(f"\n🔍 Buscando información para {codigo_pais.upper()}...")
+            print(f"\n{Fore.YELLOW}🔍 Buscando información para {codigo_pais.upper()}...{Style.RESET_ALL}")
             info_pais = obtener_info_pais(session, codigo_pais)
             
             if info_pais:
                 mostrar_info_pais(info_pais, codigo_pais.upper())
+                # Agregar al historial
+                agregar_al_historial(codigo_pais.upper(), info_pais)
             else:
-                print(f"❌ No se pudo obtener información para el código '{codigo_pais}'")
+                print(f"{Fore.RED}❌ No se pudo obtener información para el código '{codigo_pais}'{Style.RESET_ALL}")
                 
         except KeyboardInterrupt:
-            print("\n\n👋 ¡Hasta luego!")
+            print(f"\n\n{Fore.GREEN}👋 ¡Hasta luego!{Style.RESET_ALL}")
             break
         except Exception as e:
-            print(f"❌ Error inesperado: {e}")
+            print(f"{Fore.RED}❌ Error inesperado: {e}{Style.RESET_ALL}")
 
 
 if __name__ == "__main__":
